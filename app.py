@@ -7,7 +7,8 @@ import streamlit as st
 import streamlit.components.v1 as components
 import barcode
 from barcode.writer import ImageWriter
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 
 # -----------------------------------------------------------------------------
 # Configuração da Página
@@ -18,55 +19,73 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- URL DA PLANILHA ADICIONADA AQUI ---
-SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/13awqdg1h2sMrlMxE-Mg77EPlZHN-UAlYKEnw2xJo26o/edit?usp=sharing"
+# --- URL DA PLANILHA GOOGLE ---
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/13awqdg1h2sMrlMxE-Mg77EPlZHN-UAlYKEnw2xJo26o/edit?gid=0#gid=0"
 
 # -----------------------------------------------------------------------------
-# Conexão com Google Sheets
+# Autenticação e Conexão Nativa com Google Sheets (gspread)
 # -----------------------------------------------------------------------------
 @st.cache_resource
-def get_sheet_connection():
+def get_gspread_client():
+    """Autentica na API do Google Sheets usando as credenciais do secrets.toml."""
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    
     try:
-        return st.connection("gsheets", type=GSheetsConnection)
+        # Carrega credenciais da Service Account a partir da chave [connections.gsheets] no secrets.toml
+        creds = Credentials.from_service_account_info(
+            st.secrets["connections"]["gsheets"],
+            scopes=scopes
+        )
+        return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"Erro ao conectar com o Google Sheets: {e}")
+        st.error(f"Erro ao autenticar no Google Sheets: {e}")
         return None
 
-conn = get_sheet_connection()
-
 def salvar_no_google_sheets(codigo: str, origem: str, descricao: str = "") -> bool:
-    """Envia um registro de leitura/digitação diretamente para a planilha do Google Sheets."""
-    if conn is None:
-        st.error("Conexão com a planilha indisponível. Verifique se o arquivo está em .streamlit/secrets.toml.")
+    """Insere um novo registro como linha no final da planilha Google."""
+    client = get_gspread_client()
+    if client is None:
+        st.error("Falha na autenticação da Service Account. Verifique o arquivo .streamlit/secrets.toml.")
         return False
         
     try:
-        # CORREÇÃO: Passando o parâmetro spreadsheet explícito na leitura
-        df_atual = conn.read(spreadsheet=SPREADSHEET_URL, ttl=0)
+        sheet = client.open_by_url(SPREADSHEET_URL).sheet1
         
-        if df_atual is None or df_atual.empty:
-            df_atual = pd.DataFrame(columns=["Data_Hora", "Codigo", "Origem", "Descricao"])
-        else:
-            df_atual["Codigo"] = df_atual["Codigo"].astype(str)
+        # Garante cabeçalhos se a planilha estiver totalmente vazia
+        if len(sheet.get_all_values()) == 0:
+            sheet.append_row(["Data_Hora", "Codigo", "Origem", "Descricao"])
 
-        novo_registro = pd.DataFrame([{
-            "Data_Hora": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "Codigo": str(codigo),
-            "Origem": origem,
-            "Descricao": descricao
-        }])
+        nova_linha = [
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            str(codigo),
+            origem,
+            descricao
+        ]
         
-        df_atualizado = pd.concat([df_atual, novo_registro], ignore_index=True)
-        
-        # CORREÇÃO: Passando o parâmetro spreadsheet explícito na atualização
-        conn.update(spreadsheet=SPREADSHEET_URL, data=df_atualizado)
+        sheet.append_row(nova_linha)
         st.cache_data.clear()
-        
         return True
 
     except Exception as e:
         st.error(f"Falha ao salvar os dados na planilha Google: {str(e)}")
         return False
+
+@st.cache_data(ttl=5)
+def carregar_dados_planilha():
+    """Lê os dados gravados na planilha Google."""
+    client = get_gspread_client()
+    if client is None:
+        return pd.DataFrame()
+    try:
+        sheet = client.open_by_url(SPREADSHEET_URL).sheet1
+        records = sheet.get_all_records()
+        return pd.DataFrame(records)
+    except Exception as e:
+        st.error(f"Erro ao carregar dados da planilha: {e}")
+        return pd.DataFrame()
 
 # -----------------------------------------------------------------------------
 # Funções Utilitárias de Código de Barras
@@ -228,13 +247,8 @@ with tab_sheets:
         st.cache_data.clear()
         st.rerun()
         
-    if conn:
-        try:
-            # CORREÇÃO: Passando o parâmetro spreadsheet explícito na leitura da visualização
-            df_sheets = conn.read(spreadsheet=SPREADSHEET_URL, ttl=0)
-            if df_sheets is not None and not df_sheets.empty:
-                st.dataframe(df_sheets, use_container_width=True)
-            else:
-                st.info("Nenhum dado encontrado na planilha ainda.")
-        except Exception as e:
-            st.error(f"Erro ao ler os dados da planilha: {e}")
+    df_sheets = carregar_dados_planilha()
+    if not df_sheets.empty:
+        st.dataframe(df_sheets, use_container_width=True)
+    else:
+        st.info("Nenhum dado encontrado ou planilha vazia.")
