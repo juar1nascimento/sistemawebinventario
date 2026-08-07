@@ -18,6 +18,9 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- URL DA PLANILHA ADICIONADA AQUI ---
+SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/13awqdg1h2sMrlMxE-Mg77EPlZHN-UAlYKEnw2xJo26o/edit?usp=sharing"
+
 # -----------------------------------------------------------------------------
 # Conexão com Google Sheets
 # -----------------------------------------------------------------------------
@@ -38,7 +41,8 @@ def salvar_no_google_sheets(codigo: str, origem: str, descricao: str = "") -> bo
         return False
         
     try:
-        df_atual = conn.read(ttl=0)
+        # CORREÇÃO: Passando o parâmetro spreadsheet explícito na leitura
+        df_atual = conn.read(spreadsheet=SPREADSHEET_URL, ttl=0)
         
         if df_atual is None or df_atual.empty:
             df_atual = pd.DataFrame(columns=["Data_Hora", "Codigo", "Origem", "Descricao"])
@@ -54,8 +58,8 @@ def salvar_no_google_sheets(codigo: str, origem: str, descricao: str = "") -> bo
         
         df_atualizado = pd.concat([df_atual, novo_registro], ignore_index=True)
         
-        # Envia a estrutura atualizada para o Google Sheets
-        conn.update(data=df_atualizado)
+        # CORREÇÃO: Passando o parâmetro spreadsheet explícito na atualização
+        conn.update(spreadsheet=SPREADSHEET_URL, data=df_atualizado)
         st.cache_data.clear()
         
         return True
@@ -226,7 +230,8 @@ with tab_sheets:
         
     if conn:
         try:
-            df_sheets = conn.read(ttl=0)
+            # CORREÇÃO: Passando o parâmetro spreadsheet explícito na leitura da visualização
+            df_sheets = conn.read(spreadsheet=SPREADSHEET_URL, ttl=0)
             if df_sheets is not None and not df_sheets.empty:
                 st.dataframe(df_sheets, use_container_width=True)
             else:
