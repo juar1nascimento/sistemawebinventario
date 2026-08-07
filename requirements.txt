@@ -1,0 +1,8 @@
+streamlit
+python-barcode
+pillow
+opencv-python-headless
+numpy
+st-gsheets-connection
+gspread
+pandas
